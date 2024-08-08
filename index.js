@@ -1,33 +1,31 @@
 const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const cors = require('cors');
-const app = express();
-const server = require('http').Server(app);
-const io = require('socket.io')(server, {
-    cors: {
-        origin: 'https://silver-waffle-6575644vvxv36q-3000.app.github.dev',
-        methods: ['GET', 'POST']
-    }
-});
-const port = process.env.PORT || 8000;
+const http = require('http');
+const socketIo = require('socket.io');
+
+const appApi = express(); // REST API app
+const appSocket = express(); // Socket.io app
+
+const portApi = 7000; // Port for REST API
+const portSocket = 8000; // Port for Socket.io server
+
+console.clear();
+console.log('\x1b[36m%s\x1b[0m', `Server is starting up...`)
+console.log("---------------------------------------------")
+console.log("")
 
 var waitingRoom = [];
 
-var rooms = [];
-
-
-emptyWaitingRoom();
 function emptyWaitingRoom() {
-  if(waitingRoom.length >= 2) {
-    var cno1 = waitingRoom[0].split(" ")[0];
-    var cno2 = waitingRoom[1].split(" ")[0];
-    var socket1 = waitingRoom[0].split(" ")[1];
-    var socket2 = waitingRoom[1].split(" ")[1];
+  if (waitingRoom.length >= 2) {
+    const [cno1, socket1] = waitingRoom[0].split(" ");
+    const [cno2, socket2] = waitingRoom[1].split(" ");
 
-    var room = {
+    const room = {
       id: uuidv4(),
       people: [waitingRoom[0], waitingRoom[1]]
-    }
+    };
 
     io.to(socket1).emit("join-request/room", room);
     io.to(socket2).emit("join-request/room", room);
@@ -38,50 +36,54 @@ function emptyWaitingRoom() {
   }, 1000);
 }
 
-io.on('connection', (socket) => {
-  console.log(`User connected with id: ${socket.id}`);
+appApi.use(cors());
+appApi.use(express.json());
 
-  socket.on("join/waiting-room", (cno) => {
-    if(!waitingRoom.includes(`${cno} ${socket.id}`)) {
-      waitingRoom.push(`${cno} ${socket.id}`);
-      console.log(`User ${socket.id} joined waiting room with CNO: ${cno}`);
+appApi.get('/get-waiting-room', (req, res) => {
+  res.json({ "waitingRoom": waitingRoom });
+});
 
-      // if(waitingRoom.length%2 == 0 && waitingRoom.length >= 2) {
-      //   var room = {
-      //     id: uuidv4(),
-      //     people: [waitingRoom[0], waitingRoom[1]]
-      //   }
-      //   rooms.push(room);
-      //   io.to(waitingRoom[0].socketId).emit("join-request/room", room);
-      //   io.to(waitingRoom[1].socketId).emit("join-request/room", room);
-      //   waitingRoom.splice(0, 2);
-      // }
-
-    }
-  })
-
-  socket.on("join/room", (room) => {
-    socket.join(room.id);
-    console.log(`User ${socket.id} joined room ${room.id}`);
-  })
-
-  socket.on("send-message", ({ room, msg, from }) => {
-    console.log(`User ${from} sent message '${msg}' to room ${room.id}`);
-    socket.to(room.id).emit("receive-message", { msg, from });
-  })
-  
-  socket.on('disconnect', () => {
-    console.log(`User ${socket.id} disconnected`);
-  })
-
+appApi.listen(portApi, () => {
+  console.log(`REST API server is listening on port ${portApi}`);
 });
 
 
+const serverSocket = http.createServer(appSocket);
+const io = socketIo(serverSocket, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
 
+io.on('connection', (socket) => {
+  let userId = null;
+  console.log(`User connected with id: ${socket.id}`);
 
-server.listen(port, () => {
-  console.clear();
-  console.log('\x1b[36m%s\x1b[0m', `Socket.io server is listening on port ${port}`)
-  console.log("---------------------------------------------")
-  console.log("")
+  socket.on("join/waiting-room", (cno) => {
+    if (!waitingRoom.includes(`${cno} ${socket.id}`)) {
+      waitingRoom.push(`${cno} ${socket.id}`);
+      userId = `${cno} ${socket.id}`;
+
+      console.log(`User ${socket.id} joined waiting room with CNO: ${cno}`);
+    }
+  });
+
+  socket.on("send-message", ({ id, message }) => {
+    console.log(`Sending "${message}" to "${id}"`)
+    io.to(id.split(" ")[1]).emit("recive-message", {
+      "from": userId,
+      "message": message
+    })
+  })
+
+  socket.on('disconnect', () => {
+    waitingRoom = waitingRoom.filter((str) => str !== userId);
+    io.emit("user-discon", userId)
+    console.log(`User ${socket.id} disconnected`);
+  });
+});
+
+serverSocket.listen(portSocket, () => {
+  console.log(`Socket.io server is listening on port ${portSocket}`);
 });
